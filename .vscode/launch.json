@@ -1,0 +1,44 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "name": "Bridge: inventory (Windows)",
+      "request": "launch",
+      "mainClass": "com.marijoa.rfid.Bridge",
+      "cwd": "${workspaceFolder}",
+      "args": "inventory",
+      "vmArgs": "--enable-native-access=ALL-UNNAMED -Djava.library.path=${workspaceFolder}/natives/windows",
+      "classPaths": [
+        "${workspaceFolder}/out",
+        "${workspaceFolder}/libs/*"
+      ]
+    },
+    {
+      "type": "java",
+      "name": "Bridge: read-epc (Windows)",
+      "request": "launch",
+      "mainClass": "com.marijoa.rfid.Bridge",
+      "cwd": "${workspaceFolder}",
+      "args": "read-epc",
+      "vmArgs": "--enable-native-access=ALL-UNNAMED -Djava.library.path=${workspaceFolder}/natives/windows",
+      "classPaths": [
+        "${workspaceFolder}/out",
+        "${workspaceFolder}/libs/*"
+      ]
+    },
+    {
+      "type": "java",
+      "name": "Bridge: write-epc 104226 (Windows)",
+      "request": "launch",
+      "mainClass": "com.marijoa.rfid.Bridge",
+      "cwd": "${workspaceFolder}",
+      "args": "write-epc 104226",
+      "vmArgs": "--enable-native-access=ALL-UNNAMED -Djava.library.path=${workspaceFolder}/natives/windows",
+      "classPaths": [
+        "${workspaceFolder}/out",
+        "${workspaceFolder}/libs/*"
+      ]
+    }
+  ]
+}

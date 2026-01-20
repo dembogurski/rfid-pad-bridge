@@ -1,0 +1,8 @@
+{  
+  "java.project.referencedLibraries": [
+    "libs/ReaderAPI20240822.jar",
+    "libs/jna-5.4.0.jar",
+    "libs/jna-platform-5.4.0.jar",
+    "libs/json-lib-2.4-jdk15.jar"
+  ]
+}

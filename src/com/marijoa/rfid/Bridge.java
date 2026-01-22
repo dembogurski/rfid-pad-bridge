@@ -21,7 +21,7 @@ import java.util.Set;
  *   NO_TAG
  *   ERROR=<CODE>
  *
- *   Compilar con:javac -encoding UTF-8 -cp "libs\*" -d out src\com\marijoa\rfid\Bridge.java
+ *   Compilar con:   javac -encoding UTF-8 -cp "libs\*" -d out src\com\marijoa\rfid\Bridge.java
 
  * Autor: Ing. Doglas A. Dembogurski Feix
  */
@@ -129,21 +129,62 @@ public class Bridge {
                    CLEAR USER MEMORY
                    ------------------------- */
                 case "clear" -> {
-                    int words = (args.length > 1) ? Integer.parseInt(args[1]) : 32;
 
-                    UHFTAGInfo tag = reader.inventorySingleTag();
-                    if (tag == null || tag.getEPC() == null) {
-                        out("NO_TAG");
-                        break;
-                    }
-
-                    boolean ok = clearUserFiltered(reader, tag.getEPC(), words);
-                    if (ok) {
-                        out("OK");
-                    } else {
-                        out("ERROR=CLEAR_FAILED");
-                    }
+                UHFTAGInfo tag = reader.inventorySingleTag();
+                if (tag == null || tag.getEPC() == null) {
+                    out("NO_TAG");
+                    break;
                 }
+
+                String currentEpc = tag.getEPC();
+                out("DETECTED=" + currentEpc);
+
+                // Filtro por EPC actual
+                boolean filterOk = reader.setFilter(
+                        Bank.EPC,
+                        32,
+                        currentEpc.length() * 4,
+                        currentEpc
+                );
+
+                if (!filterOk) {
+                    out("ERROR=FILTER_FAILED");
+                    break;
+                }
+
+                // EPC limpio (96 bits)
+                String emptyEpc = "000000000000000000000000";
+
+                int epcWords = 6; // 96 bits / 16 = 6 words
+                int pcVal = (epcWords << 11);
+                String pcHex = String.format("%04X", pcVal);
+
+                boolean ok1 = reader.writeData(
+                        "00000000",
+                        Bank.EPC,
+                        2,
+                        epcWords,
+                        emptyEpc
+                );
+
+                boolean ok2 = reader.writeData(
+                        "00000000",
+                        Bank.EPC,
+                        1,
+                        1,
+                        pcHex
+                );
+
+                reader.setFilter(1, 32, 0, "");
+
+                if (ok1 && ok2) {
+                    out("WRITTEN=" + emptyEpc);
+                    out("OK");
+                } else {
+                    out("ERROR=CLEAR_FAILED");
+                }
+            }
+
 
                 default -> out("ERROR=UNKNOWN_ACTION");
             }

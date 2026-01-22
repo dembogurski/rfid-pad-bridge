@@ -15,11 +15,7 @@ header("Content-Type: application/json; charset=utf-8");
 $accion = $_REQUEST['action'] ?? null;
 
 if (!$accion) {
-    echo json_encode([
-        "ok" => false,
-        "error" => "Parametro 'accion' requerido"
-    ]);
-    exit;
+    error("Parametro 'accion' requerido");
 }
 
 // -------------------------------------------------
@@ -27,50 +23,30 @@ if (!$accion) {
 // -------------------------------------------------
 $acciones = [
     "inventory"     => [],
-    "scan"          => [],
     "read-epc"      => [],
     "write-epc"     => ["epc"],
-    "clear"         => ["palabras"],
-    "clear-filter"  => [],
-    "set-power"     => ["nivel"],
-    "get-freq"      => [],
-    "set-freq"      => ["modo"]
+    "clear"         => ["palabras"]
 ];
 
 if (!isset($acciones[$accion])) {
-    echo json_encode([
-        "ok" => false,
-        "error" => "Accion no permitida",
-        "accion" => $accion
-    ]);
-    exit;
+    error("Accion no permitida: $accion");
 }
 
 // -------------------------------------------------
 // 3. Construir comando Java
 // -------------------------------------------------
-$baseDir = realpath(__DIR__);
+$baseDir   = realpath(__DIR__);
 $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
 
 $params = [];
 foreach ($acciones[$accion] as $p) {
-    if (isset($_REQUEST[$p])) {
-        $params[] = escapeshellarg($_REQUEST[$p]);
+    if (!isset($_REQUEST[$p])) {
+        error("Falta parametro '$p'");
     }
+    $params[] = escapeshellarg($_REQUEST[$p]);
 }
 
-// Validaciones mínimas
-if ($accion === "write-epc" && empty($params)) {
-    error("write-epc requiere parametro 'epc'");
-}
-if ($accion === "set-power" && empty($params)) {
-    error("set-power requiere parametro 'nivel'");
-}
-if ($accion === "set-freq" && empty($params)) {
-    error("set-freq requiere parametro 'modo'");
-}
-
-$javaCmd = "java --enable-native-access=ALL-UNNAMED";  // Esto es para que no tire warnings
+$javaCmd = "java --enable-native-access=ALL-UNNAMED";
 
 if ($isWindows) {
     $javaCmd .= ' -Djava.library.path=natives\\windows -cp "out;libs\\*"';
@@ -85,11 +61,11 @@ if (!empty($params)) {
 }
 
 // -------------------------------------------------
-// 4. Ejecutar
+// 4. Ejecutar proceso Java
 // -------------------------------------------------
 $descriptorspec = [
-    1 => ["pipe", "w"], // stdout
-    2 => ["pipe", "w"], // stderr
+    1 => ["pipe", "w"], // STDOUT
+    2 => ["pipe", "w"], // STDERR
 ];
 
 $process = proc_open($javaCmd, $descriptorspec, $pipes, $baseDir);
@@ -98,8 +74,8 @@ if (!is_resource($process)) {
     error("No se pudo ejecutar Java");
 }
 
-$stdout = stream_get_contents($pipes[1]);
-$stderr = stream_get_contents($pipes[2]);
+$rawStdout = stream_get_contents($pipes[1]);
+$rawStderr = stream_get_contents($pipes[2]);
 
 fclose($pipes[1]);
 fclose($pipes[2]);
@@ -107,23 +83,45 @@ fclose($pipes[2]);
 $exitCode = proc_close($process);
 
 // -------------------------------------------------
-// 5. Respuesta
+// 5. Filtrar salida (eliminar ruido nativo)
+// -------------------------------------------------
+$lines = preg_split("/\r\n|\n|\r/", $rawStdout);
+
+$clean = [];
+foreach ($lines as $line) {
+    $line = trim($line);
+
+    if ($line === '') continue;
+
+    if (
+        str_starts_with($line, 'DETECTED=') ||
+        str_starts_with($line, 'WRITTEN=')  ||
+        str_starts_with($line, 'ERROR=')    ||
+        $line === 'OK' ||
+        $line === 'NO_TAG'
+    ) {
+        $clean[] = $line;
+    }
+}
+
+$stdout = implode("\n", $clean);
+
+// -------------------------------------------------
+// 6. Respuesta JSON
 // -------------------------------------------------
 echo json_encode([
-    "ok" => $exitCode === 0,
-    "accion" => $accion,
-    "comando" => $javaCmd,
-    "stdout" => trim($stdout),
-    "stderr" => trim($stderr),
+    "ok"        => ($exitCode === 0),
+    "accion"    => $accion,
+    "resultado" => $stdout,
     "exit_code" => $exitCode
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
 
 // -------------------------------------------------
-function error($msg)
+function error(string $msg): void
 {
     echo json_encode([
-        "ok" => false,
+        "ok"    => false,
         "error" => $msg
-    ]);
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE);
     exit;
 }

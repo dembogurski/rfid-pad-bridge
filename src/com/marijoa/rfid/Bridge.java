@@ -52,6 +52,12 @@ public class Bridge {
         }
     }
 
+    static {
+        if (!System.getProperty("os.name").toLowerCase().contains("win")) {
+            System.loadLibrary("TagReader");
+        }
+    }
+
     /* =========================
        MAIN
        ========================= */
@@ -69,48 +75,50 @@ public class Bridge {
         // Librería nativa según SO
         if (System.getProperty("os.name").toLowerCase().contains("win")) {
             reader.setDllOrSOFilePath("natives/windows/UHFAPI.dll", "");
-        } else {
-            reader.setDllOrSOFilePath("", "natives/linux/libTagReader.so");
-        }
+        }  
 
         if (!reader.init("")) {
             out("ERROR=INIT_FAILED");
             return;
         }
+        
 
         try {
 
             switch (cmd) {
 
                 /* -------------------------
-                   INVENTORY
-                   ------------------------- */
+                INVENTORY
+                ------------------------- */
                 case "inventory" -> {
-                    Set<String> epcs = inventoryOnce(reader, 800);
-                    if (epcs.isEmpty()) {
+                    Set<UHFTAGInfo> tags = inventoryOnce(reader, 800);
+                    if (tags.isEmpty()) {
                         out("NO_TAG");
                     } else {
-                        for (String epc : epcs) {
-                            out("DETECTED=" + epc);
+                        for (UHFTAGInfo info : tags) {
+                            String epcNorm = normalizeEpc(info);
+                            if (epcNorm != null && !epcNorm.isEmpty()) {
+                                out("DETECTED=" + epcNorm);
+                            }
                         }
                     }
                 }
 
                 /* -------------------------
-                   READ EPC
-                   ------------------------- */
+                READ EPC
+                ------------------------- */
                 case "read-epc" -> {
                     UHFTAGInfo tag = reader.inventorySingleTag();
                     if (tag == null || tag.getEPC() == null || tag.getEPC().isEmpty()) {
                         out("NO_TAG");
                     } else {
-                        out("DETECTED=" + tag.getEPC());
+                        out("DETECTED=" + normalizeEpc(tag));
                     }
                 }
 
                 /* -------------------------
-                   WRITE EPC
-                   ------------------------- */
+                WRITE EPC
+                ------------------------- */
                 case "write-epc" -> {
                     if (args.length < 2) {
                         out("ERROR=MISSING_EPC");
@@ -126,68 +134,68 @@ public class Bridge {
                 }
 
                 /* -------------------------
-                   CLEAR USER MEMORY
-                   ------------------------- */
+                CLEAR USER MEMORY
+                ------------------------- */
                 case "clear" -> {
 
-                UHFTAGInfo tag = reader.inventorySingleTag();
-                if (tag == null || tag.getEPC() == null) {
-                    out("NO_TAG");
-                    break;
+                    UHFTAGInfo tag = reader.inventorySingleTag();
+                    if (tag == null || tag.getEPC() == null) {
+                        out("NO_TAG");
+                        break;
+                    }
+
+                    String currentEpc = normalizeEpc(tag);
+                    out("DETECTED=" + currentEpc);
+
+                    // Filtro por EPC NORMALIZADO
+                    boolean filterOk = reader.setFilter(
+                            Bank.EPC,
+                            32,
+                            currentEpc.length() * 4,
+                            currentEpc
+                    );
+
+                    if (!filterOk) {
+                        out("ERROR=FILTER_FAILED");
+                        break;
+                    }
+
+                    // EPC limpio (96 bits)
+                    String emptyEpc = "000000000000000000000000";
+
+                    int epcWords = 6; // 96 bits / 16 = 6 words
+                    int pcVal = (epcWords << 11);
+                    String pcHex = String.format("%04X", pcVal);
+
+                    boolean ok1 = reader.writeData(
+                            "00000000",
+                            Bank.EPC,
+                            2,
+                            epcWords,
+                            emptyEpc
+                    );
+
+                    boolean ok2 = reader.writeData(
+                            "00000000",
+                            Bank.EPC,
+                            1,
+                            1,
+                            pcHex
+                    );
+
+                    reader.setFilter(1, 32, 0, "");
+
+                    if (ok1 && ok2) {
+                        out("WRITTEN=" + emptyEpc);
+                        out("OK");
+                    } else {
+                        out("ERROR=CLEAR_FAILED");
+                    }
                 }
-
-                String currentEpc = tag.getEPC();
-                out("DETECTED=" + currentEpc);
-
-                // Filtro por EPC actual
-                boolean filterOk = reader.setFilter(
-                        Bank.EPC,
-                        32,
-                        currentEpc.length() * 4,
-                        currentEpc
-                );
-
-                if (!filterOk) {
-                    out("ERROR=FILTER_FAILED");
-                    break;
-                }
-
-                // EPC limpio (96 bits)
-                String emptyEpc = "000000000000000000000000";
-
-                int epcWords = 6; // 96 bits / 16 = 6 words
-                int pcVal = (epcWords << 11);
-                String pcHex = String.format("%04X", pcVal);
-
-                boolean ok1 = reader.writeData(
-                        "00000000",
-                        Bank.EPC,
-                        2,
-                        epcWords,
-                        emptyEpc
-                );
-
-                boolean ok2 = reader.writeData(
-                        "00000000",
-                        Bank.EPC,
-                        1,
-                        1,
-                        pcHex
-                );
-
-                reader.setFilter(1, 32, 0, "");
-
-                if (ok1 && ok2) {
-                    out("WRITTEN=" + emptyEpc);
-                    out("OK");
-                } else {
-                    out("ERROR=CLEAR_FAILED");
-                }
-            }
-
 
                 default -> out("ERROR=UNKNOWN_ACTION");
             }
+
 
         } catch (Exception e) {
             log("EXCEPTION: " + e.getMessage());
@@ -197,25 +205,56 @@ public class Bridge {
         }
     }
 
+    private static String normalizeEpc(UHFTAGInfo tag) {
+        if (tag == null || tag.getEPC() == null) return null;
+
+        String epc = tag.getEPC();
+
+        // El PC viene como HEX string (ej: "3000")
+        String pcHex = tag.getPc();
+        if (pcHex == null || pcHex.length() < 4) {
+            // fallback defensivo
+            return epc.replaceAll("0+$", "");
+        }
+
+        // Parsear PC
+        int pc = Integer.parseInt(pcHex.substring(0, 4), 16);
+
+        // Bits 11–15 → cantidad de words EPC
+        int epcWords = (pc >> 11) & 0x1F;
+
+        // 1 word = 16 bits = 4 hex chars
+        int epcHexLen = epcWords * 4;
+
+        if (epc.length() >= epcHexLen && epcHexLen > 0) {
+            return epc.substring(0, epcHexLen);
+        }
+
+        return epc;
+    }
+
+
+
     /* =========================
        INVENTORY ONCE
        ========================= */
 
-    private static Set<String> inventoryOnce(RFIDWithUHFUsb r, int timeoutMs) {
-        Set<String> epcs = new LinkedHashSet<>();
+    private static Set<UHFTAGInfo> inventoryOnce(RFIDWithUHFUsb r, int timeoutMs) {
+        Set<UHFTAGInfo> tags = new LinkedHashSet<>();
         long t0 = System.currentTimeMillis();
 
         r.startInventoryTag();
         while (System.currentTimeMillis() - t0 < timeoutMs) {
             UHFTAGInfo info = r.readTagFromBuffer();
             if (info != null && info.getEPC() != null && !info.getEPC().isEmpty()) {
-                epcs.add(info.getEPC());
+                tags.add(info);
             }
         }
         r.stopInventory();
 
-        return epcs;
+        return tags;
     }
+
 
     /* =========================
        CLEAR USER (FILTERED)
